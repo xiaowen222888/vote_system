@@ -6,11 +6,11 @@ import requests
 import json
 from datetime import datetime
 
-# ==================== 您的配置信息（已填入） ====================
+# ==================== 您的配置信息 ====================
 DEEPSEEK_API_KEY = "sk-e4818962b72f481984bc5f94e9bf8778"
 JSONBIN_BIN_ID = "69fb608236566621a8315f1d"
 JSONBIN_API_KEY = "$2a$10$9oM8sPqbAk2HSirWzg20JOrJtQ3FpZ3DP4rYlp9Je9RaNTm7n7UUe"
-# ================================================================
+# ======================================================
 
 
 # ========== JSONBin云存储函数 ==========
@@ -22,9 +22,12 @@ def load_from_cloud():
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            return data.get("record", {"votes": {}, "last_updated": ""})
+            record = data.get("record", {})
+            if isinstance(record, dict):
+                return record
+            return {"votes": {}, "last_updated": ""}
     except Exception as e:
-        st.sidebar.error(f"加载失败：{str(e)[:50]}")
+        pass
     return {"votes": {}, "last_updated": ""}
 
 
@@ -40,14 +43,16 @@ def save_to_cloud(data):
         response = requests.put(url, headers=headers, json=data, timeout=10)
         return response.status_code == 200
     except Exception as e:
-        st.sidebar.error(f"保存失败：{str(e)[:50]}")
         return False
 
 
 def sync_data():
     """从云端同步数据到本地session"""
     cloud_data = load_from_cloud()
-    st.session_state.votes = cloud_data.get("votes", {})
+    if "votes" in cloud_data:
+        st.session_state.votes = cloud_data["votes"]
+    else:
+        st.session_state.votes = {}
     return cloud_data
 
 
@@ -80,10 +85,9 @@ def call_deepseek_analysis(topic, counts, total_votes):
         response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=data, timeout=10)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
-        else:
-            return f"⚠️ API错误：{response.status_code}"
-    except Exception as e:
-        return None
+    except:
+        pass
+    return None
 
 
 def local_analysis(topic, counts, total_votes):
@@ -107,36 +111,19 @@ st.set_page_config(page_title="班级投票系统 - 多设备同步版", layout=
 # 初始化：从云端加载数据
 if 'votes' not in st.session_state:
     sync_data()
-if 'sync_status' not in st.session_state:
-    st.session_state.sync_status = ""
+if 'last_vote_code' not in st.session_state:
+    st.session_state.last_vote_code = None
 
 
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("⚙️ 系统状态")
     
-    # 显示配置状态
     if DEEPSEEK_API_KEY:
         st.success("✅ AI大模型已就绪")
-    else:
-        st.warning("⚠️ 未配置API Key")
     
-    st.info(f"☁️ 云端存储已连接")
-    
-    # 同步状态
-    if st.session_state.sync_status:
-        st.caption(st.session_state.sync_status)
-    
-    # 按钮区域
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🔄 同步", use_container_width=True):
-            sync_data()
-            st.session_state.sync_status = f"✅ 已同步，共 {len(st.session_state.votes)} 场投票"
-            st.rerun()
-    with col2:
-        if st.button("📊 刷新", use_container_width=True):
-            st.rerun()
+    # 显示当前投票数量
+    st.info(f"📋 当前共有 {len(st.session_state.votes)} 场投票")
     
     st.markdown("---")
     st.header("👩‍🏫 教师控制台")
@@ -144,12 +131,19 @@ with st.sidebar:
     topic = st.text_input("📝 投票主题", "最喜欢的科目")
     options_text = st.text_area("📋 选项（每行一个）", "语文\n数学\n英语\n体育\n道法\n科学\n音乐\n美术", height=120)
     
-    if st.button("✅ 生成新投票", use_container_width=True):
+    # 生成投票按钮
+    if st.button("✅ 生成新投票", use_container_width=True, type="primary"):
         option_list = [opt.strip() for opt in options_text.split("\n") if opt.strip()]
         if len(option_list) < 2:
             st.error("至少需要2个选项")
         else:
+            # 生成6位投票码
             vote_code = str(random.randint(100000, 999999))
+            # 确保投票码不重复
+            while vote_code in st.session_state.votes:
+                vote_code = str(random.randint(100000, 999999))
+            
+            # 创建新投票
             st.session_state.votes[vote_code] = {
                 "topic": topic,
                 "options": option_list,
@@ -157,18 +151,35 @@ with st.sidebar:
                 "total_votes": 0,
                 "created_at": datetime.now().strftime("%H:%M:%S")
             }
+            st.session_state.last_vote_code = vote_code
+            
+            # 保存到云端
             if save_to_cloud({"votes": st.session_state.votes}):
                 st.session_state.sync_status = f"✅ 投票 {vote_code} 已创建"
-                st.success(f"✅ 投票已创建！\n\n**投票码：{vote_code}**")
-                st.balloons()
+                # 使用大号字体显示投票码
+                st.markdown(f"""
+                <div style="background-color:#d4edda; padding:20px; border-radius:10px; text-align:center; margin:10px 0;">
+                    <p style="font-size:16px; margin:0;">✅ 投票已创建！</p>
+                    <p style="font-size:48px; font-weight:bold; margin:10px 0; color:#155724;">{vote_code}</p>
+                    <p style="font-size:14px; margin:0;">请将此6位码告诉学生</p>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.error("保存失败，请检查网络")
-            st.rerun()
+                st.error("保存失败，请检查网络连接")
+    
+    st.markdown("---")
     
     if st.button("🗑️ 清除所有投票", use_container_width=True):
         st.session_state.votes = {}
+        st.session_state.last_vote_code = None
         save_to_cloud({"votes": {}})
-        st.session_state.sync_status = "✅ 已清除所有投票"
+        st.success("✅ 已清除所有投票")
+        st.rerun()
+    
+    # 手动同步按钮
+    if st.button("🔄 手动同步数据", use_container_width=True):
+        sync_data()
+        st.success(f"✅ 已同步，共 {len(st.session_state.votes)} 场投票")
         st.rerun()
 
 
@@ -176,22 +187,47 @@ with st.sidebar:
 st.title("📊 班级投票实时统计看板")
 st.caption("💡 手机、电脑数据实时同步 | 所有设备共享同一投票池")
 
-# 显示当前投票数量
-if len(st.session_state.votes) > 0:
-    st.info(f"📋 当前共有 {len(st.session_state.votes)} 场有效投票")
+# 显示最后创建的投票码（醒目提示）
+if st.session_state.last_vote_code:
+    last_code = st.session_state.last_vote_code
+    if last_code in st.session_state.votes:
+        st.success(f"🎯 **最新投票码：{last_code}** - {st.session_state.votes[last_code]['topic']}")
 
 
 # ========== 学生投票区 ==========
 st.subheader("🎯 学生投票区")
-vote_code_input = st.text_input("请输入6位投票码", placeholder="例如：475772")
 
-if vote_code_input and vote_code_input in st.session_state.votes:
-    vdata = st.session_state.votes[vote_code_input]
-    st.markdown(f"### 📌 {vdata['topic']}")
-    st.caption(f"创建时间：{vdata.get('created_at', '未知')}")
+# 使用两列布局，让输入更醒目
+col_code, col_btn = st.columns([3, 1])
+with col_code:
+    vote_code_input = st.text_input("请输入6位投票码", placeholder="例如：475772", label_visibility="collapsed")
+with col_btn:
+    st.write("")
+    st.write("")
+    search_btn = st.button("🔍 查询投票", use_container_width=True)
+
+# 处理查询
+if search_btn and vote_code_input:
+    if vote_code_input in st.session_state.votes:
+        st.session_state.current_vote = vote_code_input
+        st.rerun()
+    else:
+        st.error(f"❌ 投票码 {vote_code_input} 不存在，请检查后重新输入")
+
+# 显示当前投票
+current_vote = st.session_state.get('current_vote', None)
+if current_vote and current_vote in st.session_state.votes:
+    vdata = st.session_state.votes[current_vote]
     
-    # 检查是否已投票（基于浏览器session）
-    voter_key = f"voted_{vote_code_input}"
+    st.markdown(f"""
+    <div style="background-color:#e8f4f8; padding:15px; border-radius:10px; margin:10px 0;">
+        <h3 style="margin:0; text-align:center;">📌 {vdata['topic']}</h3>
+        <p style="text-align:center; margin:5px 0 0 0; font-size:12px;">创建于 {vdata.get('created_at', '未知')}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 检查是否已投票
+    voter_key = f"voted_{current_vote}"
     if voter_key not in st.session_state:
         st.session_state[voter_key] = False
     
@@ -199,22 +235,20 @@ if vote_code_input and vote_code_input in st.session_state.votes:
         st.warning("✅ 您已经投过票了！感谢参与~")
     else:
         choice = st.radio("请选择一项：", vdata["options"], index=None, horizontal=True)
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("📮 提交投票", type="primary", use_container_width=True):
-                if choice:
-                    vdata["counts"][choice] += 1
-                    vdata["total_votes"] += 1
-                    st.session_state[voter_key] = True
-                    # 保存到云端
-                    if save_to_cloud({"votes": st.session_state.votes}):
-                        st.success("🎉 投票成功！数据已同步")
-                        st.balloons()
-                    else:
-                        st.error("保存失败，请重试")
+        if st.button("📮 提交投票", type="primary", use_container_width=True):
+            if choice:
+                vdata["counts"][choice] += 1
+                vdata["total_votes"] += 1
+                st.session_state[voter_key] = True
+                # 保存到云端
+                if save_to_cloud({"votes": st.session_state.votes}):
+                    st.success("🎉 投票成功！数据已同步")
+                    st.balloons()
                     st.rerun()
                 else:
-                    st.error("请先选择一个选项")
+                    st.error("保存失败，请重试")
+            else:
+                st.error("请先选择一个选项")
     
     # 显示结果
     st.markdown("---")
@@ -225,16 +259,20 @@ if vote_code_input and vote_code_input in st.session_state.votes:
     
     col1, col2 = st.columns(2)
     with col1:
-        fig_bar = px.bar(df, x="选项", y="票数", title="条形图", text="票数", color="票数", color_continuous_scale="Blues")
-        fig_bar.update_traces(textposition="outside")
-        st.plotly_chart(fig_bar, use_container_width=True)
+        if df["票数"].sum() > 0:
+            fig_bar = px.bar(df, x="选项", y="票数", title="条形图", text="票数", color="票数", color_continuous_scale="Blues")
+            fig_bar.update_traces(textposition="outside")
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("📊 投票后将显示条形图")
+    
     with col2:
         if df["票数"].sum() > 0:
             fig_pie = px.pie(df, names="选项", values="票数", title="饼图", hole=0.4)
             fig_pie.update_traces(textposition="inside", textinfo="percent+label")
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
-            st.info("投票后将显示饼图")
+            st.info("🥧 投票后将显示饼图")
     
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.metric("📊 总投票人数", vdata["total_votes"])
@@ -248,22 +286,30 @@ if vote_code_input and vote_code_input in st.session_state.votes:
                 analysis = call_deepseek_analysis(vdata["topic"], vdata["counts"], vdata["total_votes"])
                 if analysis is None:
                     analysis = local_analysis(vdata["topic"], vdata["counts"], vdata["total_votes"])
-                    analysis += "\n\n💡 *提示：AI分析功能已启用，请检查网络*"
                 st.success(analysis)
     else:
         st.info("💡 投票开始后，点击这里查看AI解读")
+    
+    # 返回按钮
+    if st.button("← 返回查询其他投票"):
+        st.session_state.current_vote = None
+        st.rerun()
 
-elif vote_code_input:
-    st.error("❌ 投票码不存在，请检查后重新输入")
-else:
-    st.info("💡 教师先在左侧创建投票，然后将6位投票码告诉学生")
+elif vote_code_input and not search_btn:
+    st.info("💡 输入投票码后，点击「查询投票」按钮")
 
 
-# ========== 教师工具 ==========
+# ========== 教师工具：查看所有投票 ==========
 with st.expander("📋 教师工具：查看所有投票记录"):
     if st.session_state.votes:
         for code, info in st.session_state.votes.items():
-            st.write(f"**{code}** - {info['topic']} | 共{info['total_votes']}人参与 | 创建于 {info.get('created_at', '未知')}")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**{code}** - {info['topic']} | 共{info['total_votes']}人参与")
+            with col2:
+                if st.button(f"使用", key=f"use_{code}"):
+                    st.session_state.current_vote = code
+                    st.rerun()
             for opt, cnt in info['counts'].items():
                 st.write(f"  - {opt}: {cnt}票")
             st.markdown("---")
