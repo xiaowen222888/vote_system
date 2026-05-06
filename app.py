@@ -7,6 +7,8 @@ import json
 import re
 
 DEEPSEEK_API_KEY = "sk-e4818962b72f481984bc5f94e9bf8778"  
+JSONBIN_BIN_ID = "69fb608236566621a8315f1d"  
+JSONBIN_API_KEY = "$2a$10$9oM8sPqbAk2HSirWzg20JOrJtQ3FpZ3DP4rYlp9Je9RaNTm7n7UUe"
 
 # ========== 页面配置 ==========
 st.set_page_config(
