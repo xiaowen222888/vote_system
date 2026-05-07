@@ -292,7 +292,7 @@ if vote_code_input and vote_code_input in st.session_state.votes:
                     max_opt = max(vdata["counts"], key=vdata["counts"].get)
                     max_votes = vdata["counts"][max_opt]
                     percent = max_votes / vdata['total_votes'] * 100
-                    st.info(f"🎉 最受欢迎的是「{max_opt}」，获得 {max_votes} 票，占比 {percent:.1f}%。")
+                    st.info(f"🎉 最受欢迎的是「{max_opt}」，获得 {max_votes} 票，占比 {percent:.1f}%。建议")
             else:
                 st.info("还没有投票数据~")
 
