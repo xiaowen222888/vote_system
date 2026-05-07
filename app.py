@@ -153,8 +153,8 @@ def teacher_console():
         
         st.markdown("---")
         
-        topic = st.text_input("📝 投票主题", "最喜欢的运动")
-        options_text = st.text_area("📋 选项（每行一个）", "篮球\n足球\n乒乓球\n跳绳", height=100)
+        topic = st.text_input("📝 投票主题", "最喜欢的季节")
+        options_text = st.text_area("📋 选项（每行一个）", "春季\n夏季\n秋季\n冬季", height=100)
         
         col1, col2 = st.columns(2)
         with col1:
