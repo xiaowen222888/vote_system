@@ -12,7 +12,7 @@ JSONBIN_BIN_ID = "69fb608236566621a8315f1d"
 JSONBIN_API_KEY = "$2a$10$9oM8sPqbAk2HSirWzg20JOrJtQ3FpZ3DP4rYlp9Je9RaNTm7n7UUe"
 
 # 教师密码（可以修改成你想要的密码）
-TEACHER_PASSWORD = "teacher2026"  # ⬅️ 修改这里设置教师密码
+TEACHER_PASSWORD = "teacher2026"
 # ======================================================
 
 
@@ -79,14 +79,35 @@ def force_sync_to_cloud():
 def call_deepseek_analysis(topic, counts, total_votes):
     """调用DeepSeek API分析投票结果"""
     if not DEEPSEEK_API_KEY:
-        return None
+        return None, "未配置DeepSeek API Key，请联系教师配置"
     
+    # 找出最多和最少的选项
     max_option = max(counts, key=counts.get)
+    max_votes = counts[max_option]
+    min_option = min(counts, key=counts.get)
+    min_votes = counts[min_option]
+    max_percent = round(max_votes / total_votes * 100, 1)
+    min_percent = round(min_votes / total_votes * 100, 1)
     
     system_prompt = """你是一位亲切的小学数学老师，正在给三年级学生讲解数据的收集与整理。
-请用活泼、鼓励的语气解读投票结果。要求：先说最受欢迎的结果和票数，再说最少被选的结果，最后给出一条教学建议。总字数150字以内。"""
+
+请根据以下投票结果，生成一段完整的数据解读，要求：
+
+1. 先说总投票人数
+2. 再说最受欢迎的结果、具体票数和占比
+3. 再说得票最少的结果、具体票数和占比
+4. 分析这个结果可能的原因（1-2句）
+5. 给出一条具体的教学建议或课堂活动建议
+6. 总字数控制在200-250字之间
+7. 语气要活泼、鼓励，适合三年级学生
+
+请直接输出解读内容，不要输出其他内容。"""
     
-    user_prompt = f"投票主题：{topic}，各选项票数：{dict(counts)}，总投票人数：{total_votes}人"
+    user_prompt = f"""投票主题：{topic}
+各选项票数：{dict(counts)}
+总投票人数：{total_votes}人
+最受欢迎：{max_option}（{max_votes}票，占{max_percent}%）
+得票最少：{min_option}（{min_votes}票，占{min_percent}%）"""
     
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     data = {
@@ -96,16 +117,20 @@ def call_deepseek_analysis(topic, counts, total_votes):
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.7,
-        "max_tokens": 500
+        "max_tokens": 600
     }
     
     try:
         response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=data, timeout=10)
         if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
-    except:
-        pass
-    return None
+            result = response.json()
+            return result["choices"][0]["message"]["content"], None
+        else:
+            return None, f"API调用失败（状态码：{response.status_code}），请检查网络后重试"
+    except requests.exceptions.Timeout:
+        return None, "请求超时，请检查网络连接后重试"
+    except Exception as e:
+        return None, f"发生错误：{str(e)[:50]}，请联系教师"
 
 
 # ========== 页面配置 ==========
@@ -236,7 +261,9 @@ if vote_code_input and vote_code_input in st.session_state.votes:
         choice = st.radio("请选择一项：", vdata["options"], index=None, horizontal=True)
         if st.button("📮 提交投票", type="primary"):
             if choice:
+                # 先同步最新数据
                 sync_from_cloud()
+                # 重新获取最新数据
                 vdata = st.session_state.votes[vote_code_input]
                 vdata["counts"][choice] += 1
                 vdata["total_votes"] += 1
@@ -265,7 +292,8 @@ if vote_code_input and vote_code_input in st.session_state.votes:
     col1, col2 = st.columns(2)
     with col1:
         if df["票数"].sum() > 0:
-            fig_bar = px.bar(df, x="选项", y="票数", title="条形图", text="票数", color="票数")
+            fig_bar = px.bar(df, x="选项", y="票数", title="条形图", text="票数", color="票数",
+                            color_continuous_scale="Blues")
             fig_bar.update_traces(textposition="outside")
             st.plotly_chart(fig_bar, use_container_width=True)
         else:
@@ -273,37 +301,48 @@ if vote_code_input and vote_code_input in st.session_state.votes:
     
     with col2:
         if df["票数"].sum() > 0:
-            fig_pie = px.pie(df, names="选项", values="票数", title="饼图")
+            fig_pie = px.pie(df, names="选项", values="票数", title="饼图", hole=0.4)
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
             st.plotly_chart(fig_pie, use_container_width=True)
         else:
             st.info("🥧 投票后将显示饼图")
     
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    # 详细统计表
+    st.subheader("📋 详细投票分布")
+    df_display = df.copy()
+    if df_display["票数"].sum() > 0:
+        df_display["占比"] = (df_display["票数"] / df_display["票数"].sum() * 100).round(1).astype(str) + "%"
+    else:
+        df_display["占比"] = "0%"
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
     st.caption(f"总投票人数：{vdata['total_votes']} 人")
     
-    # AI分析（仅教师登录后可见？不，学生也可以看分析结果）
-    if st.button("🤖 AI智能分析"):
-        with st.spinner("AI正在分析中..."):
+    # AI智能分析
+    st.markdown("---")
+    st.subheader("🤖 AI智能分析")
+    
+    if st.button("🔍 生成AI解读", type="secondary"):
+        with st.spinner("🤖 AI正在分析投票结果..."):
             if vdata['total_votes'] > 0:
-                analysis = call_deepseek_analysis(vdata["topic"], vdata["counts"], vdata["total_votes"])
+                analysis, error_msg = call_deepseek_analysis(vdata["topic"], vdata["counts"], vdata["total_votes"])
                 if analysis:
                     st.success(analysis)
+                    st.caption("⚠️ 以上内容由AI生成")
                 else:
-                    max_opt = max(vdata["counts"], key=vdata["counts"].get)
-                    max_votes = vdata["counts"][max_opt]
-                    percent = max_votes / vdata['total_votes'] * 100
-                    st.info(f"🎉 最受欢迎的是「{max_opt}」，获得 {max_votes} 票，占比 {percent:.1f}%。建议")
+                    st.error(f"❌ AI分析失败：{error_msg}")
             else:
-                st.info("还没有投票数据~")
+                st.info("还没有投票数据，请等待同学参与~")
 
 elif vote_code_input:
     st.error("❌ 投票码不存在，请检查后重新输入")
 else:
     st.info("💡 请输入教师给出的6位投票码开始投票")
 
+
 # ========== 历史投票记录（默认收起，所有人可见） ==========
 with st.expander("📚 历史投票记录（点击展开查看）"):
     if st.session_state.votes:
+        # 按创建时间倒序排列
         sorted_votes = sorted(st.session_state.votes.items(), 
                             key=lambda x: x[1].get('created_at', ''), 
                             reverse=True)
@@ -318,6 +357,7 @@ with st.expander("📚 历史投票记录（点击展开查看）"):
                 with col3:
                     st.write(f"共 {info['total_votes']} 人")
                 
+                # 显示该投票的详细分布
                 if info['total_votes'] > 0:
                     df_history = pd.DataFrame({
                         "选项": list(info["counts"].keys()),
@@ -331,8 +371,9 @@ with st.expander("📚 历史投票记录（点击展开查看）"):
                     st.caption("暂无投票数据")
                 st.markdown("---")
     else:
-        st.info("暂无投票记录")
+        st.info("暂无投票记录，请在左侧创建新投票")
 
-# 页脚
+
+# ========== 页脚 ==========
 st.markdown("---")
-st.caption("🎓 小学数学教学专用 | 数据存储于JSONBin | 支持多设备实时同步")
+st.caption("🎓 小学数学教学专用 | 数据存储于JSONBin | 支持多设备实时同步 | 投票后请点击「同步数据」")
